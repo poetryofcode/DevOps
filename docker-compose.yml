@@ -50,6 +50,13 @@ services:
     #   - примонтировать локальную папку с runtime-конфигом внутрь контейнера
     #     по пути /app/config; делаем это READ-ONLY, чтобы контейнер физически
     #     не мог изменить файл на хосте
+    image: ${DOCKERHUB_USERNAME}/todo-back:${IMAGE_TAG}
+    env_file: .env.development.back
+    ports: ["13000:3000"]
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes: ["./app-config:/app/config:ro"]
 
   front:
     # TODO — frontend (nginx со статикой):
