@@ -50,6 +50,8 @@ push: push-back push-front ## Запушить оба образа
 
 pull: ## Скачать образы с Docker Hub (НЕ собирать локально)
 	docker compose --env-file .env.development.compose pull
+# docker compose pull reads the image names directly from docker-compose.yml — it already has ${DOCKERHUB_USERNAME}/todo-front:${IMAGE_TAG} defined there. No need to specify them again in the command.
+
 
 up: ## Поднять стек в фоне (compose сам соблюдёт depends_on/healthcheck)
 	docker compose --env-file .env.development.compose up -d

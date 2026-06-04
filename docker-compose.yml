@@ -65,6 +65,11 @@ services:
     #   - выразить зависимость от back, но НЕ через service_healthy:
     #     у back в этом задании нет healthcheck, поэтому здесь нужна другая condition
     #     (которая ждёт только запуска контейнера, не его health-статуса)
+    image: ${DOCKERHUB_USERNAME}/todo-front:${IMAGE_TAG}
+    ports: ["18080:80"]
+    depends_on:
+      back:
+        condition: service_started
 
 volumes:
   # TODO — секция named volumes:
