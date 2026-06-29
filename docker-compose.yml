@@ -15,6 +15,7 @@ services:
     #   - подать переменные окружения из соответствующего env-файла
     env_file: .env.development.db
     #   - пробросить порт наружу на 15432 (внешний выбран так, чтобы не конфликтовать
+    restart: unless-stopped
     ports: ["15432:5432"]
     #     с локально установленным Postgres)
     #   - персистить данные через NAMED VOLUME (не bind-mount); имя тома — pgdata
@@ -50,8 +51,11 @@ services:
     #   - примонтировать локальную папку с runtime-конфигом внутрь контейнера
     #     по пути /app/config; делаем это READ-ONLY, чтобы контейнер физически
     #     не мог изменить файл на хосте
-    image: ${DOCKERHUB_USERNAME}/todo-back:${IMAGE_TAG}
+    image: ${DOCKERHUB_USERNAME}/todo-back:${APP_VERSION}
     env_file: .env.development.back
+    restart: unless-stopped
+    environment:
+      APP_VERSION: ${APP_VERSION}
     ports: ["13000:3000"]
     depends_on:
       db:
@@ -65,7 +69,8 @@ services:
     #   - выразить зависимость от back, но НЕ через service_healthy:
     #     у back в этом задании нет healthcheck, поэтому здесь нужна другая condition
     #     (которая ждёт только запуска контейнера, не его health-статуса)
-    image: ${DOCKERHUB_USERNAME}/todo-front:${IMAGE_TAG}
+    image: ${DOCKERHUB_USERNAME}/todo-front:${APP_VERSION}
+    restart: unless-stopped
     ports: ["18080:80"]
     depends_on:
       back:
@@ -76,3 +81,24 @@ volumes:
   #   - объявить том, имя которого ты указал в сервисе db (без дополнительных опций,
   #     пустого тела достаточно)
   pgdata:
+
+# docker-compose.yml — file to copy (from your laptop)
+# scp = secure copy — same idea but copies over the network via SSH:
+
+# oh so if we do some changes in docerk-compose.yml for example in frontend contaiener then if we run docker-compose up then it will restart only frontend container but other containers like backend nad db will be running. Yes exactly. docker compose up -d compares the current running state with the new docker-compose.yml and only restarts containers where something changed.
+
+# in this case looks like it is rear when we need to run docker compose down. Yes, docker compose down is rarely needed. You'd use it when: Completely removing everything — wiping the stack to start fresh
+
+# So todo-front is always running, waiting for requests. nginx just forwards traffic to it.
+
+# oh. so we starting first our app with docker compose up on vps
+#and later when user go to our url it just show content
+#Yes exactly.
+
+#docker compose up -d starts everything once. Then the containers just sit there running 24/7 waiting for requests.
+
+#That's the whole point of -d (detached) — containers run in the background permanently, not just while you're connected to the VPS.
+
+#When a user visits the site — nginx forwards the request to the already-running container, gets the response, sends it back. The container was already there waiting.
+
+# wheere this folder comes from. dist/ It's created by npm run build (Vite) during Stage 1. It doesn't exist in your source code — it's generated. That's why it's in .gitignore — no point committing compiled output when it can always be rebuilt from source.
