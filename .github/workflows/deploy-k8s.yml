@@ -41,8 +41,8 @@ jobs:
           echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ~/.kube/config
       - name: Deploy to k3s
         env:
-          IMAGE: ${{ needs.build.outputs.image }}
-          APP_VERSION: ${{ needs.build.outputs.version }}
+          IMAGE: ${{ secrets.DOCKER_USER }}/todo-back:sha-${{ github.sha }}
+          APP_VERSION: sha-${{ github.sha }}
         run: |
           envsubst < k8s/backend.yaml | kubectl apply -f -
           kubectl rollout status deployment/backend --timeout=120s
