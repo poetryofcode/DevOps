@@ -22,10 +22,10 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - ВАШ_ДОМЕН
-      secretName: app-tls           # сюда cert-manager положит сертификат Let's Encrypt
+        - poetryofcode.uk
+      secretName: app-tls # сюда cert-manager положит сертификат Let's Encrypt
   rules:
-    - host: ВАШ_ДОМЕН
+    - host: poetryofcode.uk
       http:
         paths:
           - path: /api(/|$)(.*)
