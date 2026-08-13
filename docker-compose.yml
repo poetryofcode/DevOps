@@ -1,0 +1,78 @@
+# Docker Compose файл для hw2.
+#
+# Имя образа для back/front собирается из переменных DOCKERHUB_USERNAME и IMAGE_TAG —
+# их compose берёт из .env.development.compose, который мы передаём флагом --env-file
+# (см. Makefile).
+#
+# В этом файле НИГДЕ не должно быть сборки из исходников: образы должны браться
+# готовыми с Docker Hub. Если потребуется собрать — это делает Makefile, не compose.
+
+services:
+  db:
+    # TODO — база данных:
+    #   - указать готовый образ postgres 16-alpine
+    image: postgres:16-alpine
+    #   - подать переменные окружения из соответствующего env-файла
+    env_file: .env.development.db
+    #   - пробросить порт наружу на 15432 (внешний выбран так, чтобы не конфликтовать
+    ports: ["15432:5432"]
+    #     с локально установленным Postgres)
+    #   - персистить данные через NAMED VOLUME (не bind-mount); имя тома — pgdata
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    #   - добавить проверку готовности: запрос к самой БД через pg_isready,
+    #     с использованием POSTGRES_USER и POSTGRES_DB
+    #     ⚠️ переменные окружения внутри проверки экранируются двойным $$,
+    #     иначе compose попытается подставить их сам на этапе парсинга файла
+    #     (а нам надо, чтобы их разворачивал shell внутри контейнера в рантайме)
+    #   - подобрать осмысленные параметры проверки: как часто опрашивать, сколько
+    #     попыток до признания unhealthy, сколько ждать перед самой первой проверкой
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      #  testing if we can connect to postgress data base with that user and data base name
+      # shell command allow to use environment variable; we can all them with plain CMD but then we need to hardcode them
+      # pg_isready - PostgreSQL utility that checks if the DB is accepting connections
+      # -U — the PostgreSQL user to connect as
+      # -d — the database name to connect to
+
+      interval: 5s #we run that shell command for testing every 5 s
+      timeout: 5s # Docker is waiting for 5s for response from pg_isready if won't come than Docker treats as a failure
+      retries: 5 # this will only runs if pg_isready failed for 5 times
+      start_period: 10s # Docker waits 10 seconds after the container starts before it begins running the health checks. Gives Postgres time to initialize before the first check runs
+  back:
+    # TODO — backend (NestJS):
+    #   - указать образ, который ты публикуешь в свой Docker Hub репозиторий
+    #     (используй переменные DOCKERHUB_USERNAME и IMAGE_TAG)
+    #   - подать переменные окружения из соответствующего env-файла
+    #     (не забудь: в нём DB_HOST теперь смотрит на service-name из compose-сети)
+    #   - пробросить порт API на 13000
+    #   - выразить зависимость от базы: back не должен стартовать, пока БД не
+    #     ответит на healthcheck успешно (используй подходящую condition)
+    #   - примонтировать локальную папку с runtime-конфигом внутрь контейнера
+    #     по пути /app/config; делаем это READ-ONLY, чтобы контейнер физически
+    #     не мог изменить файл на хосте
+    image: ${DOCKERHUB_USERNAME}/todo-back:${IMAGE_TAG}
+    env_file: .env.development.back
+    ports: ["13000:3000"]
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes: ["./app-config:/app/config:ro"]
+
+  front:
+    # TODO — frontend (nginx со статикой):
+    #   - указать образ из своего Docker Hub репозитория
+    #   - пробросить 80-й порт nginx наружу на 18080
+    #   - выразить зависимость от back, но НЕ через service_healthy:
+    #     у back в этом задании нет healthcheck, поэтому здесь нужна другая condition
+    #     (которая ждёт только запуска контейнера, не его health-статуса)
+    image: ${DOCKERHUB_USERNAME}/todo-front:${IMAGE_TAG}
+    ports: ["18080:80"]
+    depends_on:
+      back:
+        condition: service_started
+
+volumes:
+  # TODO — секция named volumes:
+  #   - объявить том, имя которого ты указал в сервисе db (без дополнительных опций,
+  #     пустого тела достаточно)
+  pgdata:

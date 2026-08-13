@@ -8,14 +8,13 @@
 #   - Run the production build (compile TS into dist/)
 FROM node:20-alpine AS builder
 WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-# tsconfig*.json, nest-cli.json i thought to move them before package.json because they rearly changes but turn out when they change then need to run all packages but it is costly
-COPY tsconfig*.json ./
-COPY nest-cli.json ./
-COPY src ./src 
-# we can not copy name of the folder (first argument) it only copies what inside of that folder therefore we need give the same name as second argument
-RUN npm run build
+COPY package*.json .
+RUN npm install
+COPY tsconfig*.json . 
+COPY nest-cli.json . 
+COPY src ./src
+RUN npm run build 
+# That's npm run build — it's building the TypeScript code into JavaScript (dist/), not building a Docker image. The Docker image is built by the docker build command in the Makefile.
 
 # ---- Stage 2: runtime ----
 # TODO:
@@ -27,9 +26,15 @@ RUN npm run build
 FROM node:20-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
-COPY package*.json ./
+COPY package*.json .
 RUN npm ci --omit=dev
-# --omit dev -> we do not development dependencies only prod
-COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/dist/ ./dist
 EXPOSE 3000
-CMD [ "node", "dist/main.js"] 
+CMD [ "node", "dist/main.js" ]
+# by default npm ci installs all dependencies including dev. You need --omit=dev to skip dev dependencies.
+
+# EXPOSE ${PORT}
+# EXPOSE doesn't read env vars from .env files — those are only loaded at runtime by Docker Compose. Use the hardcoded value: EXPOSE 3000
+
+
+
