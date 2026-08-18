@@ -1,98 +1,84 @@
-name: Deploy
+name: CI/CD (GitOps)
 
 on:
   push:
     branches: [week*]
 
-jobs:
-  checks:
-    uses: ./.github/workflows/typecheck.yaml
+env:
+  IMAGE_TAG: sha-${{ github.sha }}
 
+jobs:
   build:
-    needs: checks
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - service: back
-            build_arg: ""
-          - service: front
-            build_arg: "--build-arg VITE_API_URL=${{ vars.VITE_API_URL }}"
+    outputs:
+      image_tag: ${{ env.IMAGE_TAG }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Login to Docker Hub
-        run: echo "${{ secrets.DOCKER_PASS }}" | docker login -u "${{ secrets.DOCKER_USER }}" --password-stdin
-
-      - name: Build image
-        run: |
-          docker build ${{ matrix.build_arg }} \
-            -t ${{ secrets.DOCKER_USER }}/todo-${{ matrix.service }}:sha-${{ github.sha }} \
-            -t ${{ secrets.DOCKER_USER }}/todo-${{ matrix.service }}:latest \
-            ./${{ matrix.service }}
-
-      - name: Push image
-        run: |
-          docker push ${{ secrets.DOCKER_USER }}/todo-${{ matrix.service }}:sha-${{ github.sha }}
-          docker push ${{ secrets.DOCKER_USER }}/todo-${{ matrix.service }}:latest
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_PASS }}
+      - name: Build & push backend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./back
+          push: true
+          tags: ${{ secrets.DOCKER_USER }}/todo-back:${{ env.IMAGE_TAG }}
+      - name: Build & push frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./front
+          push: true
+          build-args: VITE_API_URL=${{ vars.VITE_API_URL }}
+          tags: ${{ secrets.DOCKER_USER }}/todo-front:${{ env.IMAGE_TAG }}
 
   deploy:
-    needs: build
+    needs: [build]
     runs-on: ubuntu-latest
     steps:
-      - uses: appleboy/ssh-action@v1.0.3
+      - name: Checkout gitops repo
+        uses: actions/checkout@v4
         with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            cd ~/myapp
-            sed -i "s|^APP_VERSION=.*|APP_VERSION=sha-${{ github.sha }}|" .env.development.compose
-            docker compose --env-file .env.development.compose pull back front
-            docker compose --env-file .env.development.compose up -d --no-deps back front
+          repository: ${{ github.repository_owner }}/devops-gitops
+          token: ${{ secrets.GITOPS_TOKEN }}
+          ref: main
+          path: gitops
 
-  verify:
-    needs: deploy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      - name: Install yq
+        run: |
+          sudo curl -sL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
+          sudo chmod +x /usr/local/bin/yq
 
-      - name: Smoke test
+      - name: Bump image tags + PR + squash-merge
         env:
-          E2E_BASE_URL: ${{ vars.VITE_API_URL }}
+          GITOPS_TOKEN: ${{ secrets.GITOPS_TOKEN }}
+          TAG: ${{ needs.build.outputs.image_tag }}
         run: |
-          export E2E_BASE_URL="${E2E_BASE_URL%/api}"
-          bash scripts/smoke.sh
+          cd gitops
+          yq e -i ".backend.image.tag = \"$TAG\""  helm/myapp/values-production.yaml
+          yq e -i ".frontend.image.tag = \"$TAG\"" helm/myapp/values-production.yaml
+          git config user.email "github-actions@github.com"
+          git config user.name  "GitHub Actions"
+          BRANCH="update-image-${{ github.run_id }}"
+          git checkout -b "$BRANCH"
+          git commit -am "chore: bump images to $TAG"
+          git push origin "$BRANCH"
+          REPO="${{ github.repository_owner }}/devops-gitops"
+          PR=$(curl -sX POST -H "Authorization: Bearer $GITOPS_TOKEN" \
+            https://api.github.com/repos/$REPO/pulls \
+            -d "{\"title\":\"Update image to $TAG\",\"head\":\"$BRANCH\",\"base\":\"main\"}" \
+            | python3 -c "import sys,json;print(json.load(sys.stdin)['number'])")
+          curl -sX PUT -H "Authorization: Bearer $GITOPS_TOKEN" \
+            https://api.github.com/repos/$REPO/pulls/$PR/merge \
+            -d '{"merge_method":"squash"}'
 
-  notify:
-    needs: [checks, build, deploy, verify]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Send Telegram notification
+      - name: ArgoCD sync
+        env:
+          ARGOCD_AUTH_TOKEN: ${{ secrets.ARGOCD_AUTH_TOKEN }}
+          ARGOCD_SERVER: ${{ vars.ARGOCD_SERVER }}
         run: |
-          CHECKS="${{ needs.checks.result }}"
-          BUILD="${{ needs.build.result }}"
-          DEPLOY="${{ needs.deploy.result }}"
-          VERIFY="${{ needs.verify.result }}"
-
-          if [ "$CHECKS" != "success" ]; then
-            TEXT="❌ Type-check упал%0A${{ github.repository }} @ ${{ github.ref_name }}%0A${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          elif [ "$BUILD" != "success" ]; then
-            TEXT="❌ Build упал%0A${{ github.repository }} @ ${{ github.ref_name }}%0A${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          elif [ "$DEPLOY" != "success" ]; then
-            TEXT="❌ Deploy упал%0A${{ github.repository }} @ ${{ github.ref_name }}%0A${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          elif [ "$VERIFY" != "success" ]; then
-            TEXT="❌ Smoke не прошёл%0A${{ github.repository }} @ ${{ github.ref_name }}%0A${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          else
-            TEXT="✅ Деплой успешен%0A${{ github.repository }} @ ${{ github.ref_name }}%0AActor: ${{ github.actor }}%0AVersion: sha-${{ github.sha }}"
-          fi
-
-          RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-            -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
-            -d "text=$TEXT" \
-            -d "disable_web_page_preview=true")
-
-          echo "$RESPONSE"
-          echo "$RESPONSE" | grep -q '"ok":true' || { echo "Telegram API rejected"; exit 1; }
+          sudo curl -sSL -o /usr/local/bin/argocd \
+            https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+          sudo chmod +x /usr/local/bin/argocd
+          argocd app sync myapp --grpc-web
+          argocd app wait myapp --grpc-web --timeout 300
